@@ -1,0 +1,69 @@
+#!/bin/bash
+#
+# Copyright 2014,2015,2016,2017,2018 Security Onion Solutions, LLC
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+#. /usr/sbin/so-elastic-common
+#. /usr/lib/nsmnow/lib-console-utils
+. /etc/nsm/securityonion.conf
+
+LOGGING=true
+
+function ok(){
+	echo -e "$STAT${NORMAL}[${GREEN_BOLD}  OK  ${NORMAL}]"
+}
+function fail(){
+	echo -e "$STAT${NORMAL}[${RED_BOLD} FAIL ${NORMAL}]"
+}
+function warn(){
+	echo -e "$STAT${NORMAL}[${YELLOW_BOLD} WARN ${NORMAL}]"
+}
+
+# If Elasticsearch is not enabled, then exit immediately
+[ "$ELASTICSEARCH_ENABLED" != "yes" ] && exit
+
+
+if [ "$LOGSTASH_ENABLED" = "yes" ]; then
+  so-logstash-restart
+  LOGSTASH_UP=false
+  STARTTIME=$(date +%s)
+  while [[ $LOGSTASH_UP = false ]]; do
+    QUEUE_TYPE=$(curl -s "$LOGSTASH_HOST:$LOGSTASH_PORT/_node/stats" | jq .pipelines.main.queue.type | sed s/\"//g)
+    #echo -ne "  ${BLUE}*${NORMAL} so-logstash"
+    if docker ps |	grep -q so-logstash; then
+    	if [ "$QUEUE_TYPE" == "memory" ] || [ "$QUEUE_TYPE" == "persisted" ]; then	
+          ENDTIME=$(date +%s)
+          if [[ $LOGGING = true ]]; then
+            echo " ---------------------- $(date +%c) ---------------------" | tee -a "$(date -I).log"
+            echo " -- Logstash took $(($ENDTIME - $STARTTIME)) seconds to initialize..." | tee -a $(date -I).log
+            echo -e " -- The following files were disabled in /etc/logstash/conf.d/:\n$(diff -r /etc/logstash/conf.d /etc/logstash/conf.d.available/|grep 'conf.d.available' | cut -d':' -f 2)" | tee -a $(date -I).log
+            echo -e " ----------------------------------------------------------------------------\n" | tee -a $(date -I).log
+          else
+            echo " -- Logstash took $(($ENDTIME - $STARTTIME)) seconds to initialize..."
+            echo -e " -- The following files were disabled in /etc/logstash/conf.d/:\n$(diff -r /etc/logstash/conf.d /etc/logstash/conf.d.available/|grep 'conf.d.available' | cut -d':' -f 2)"
+          fi
+          LOGSTASH_UP=true
+    	else
+          NOWTIME=$(date +%s)
+          clear
+    	  echo " -- Logstash has started, but has been initializing for $(($NOWTIME - $STARTTIME)) seconds"
+    	fi
+    else
+    	fail
+    fi
+    sleep 2
+  done
+fi
+echo
